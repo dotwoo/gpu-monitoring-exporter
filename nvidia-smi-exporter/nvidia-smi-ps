@@ -3,29 +3,36 @@
 set -u
 
 NVIDIA_SMI_QUERY_GPU="uuid,index"
-NVIDIA_SMI_QUERY_COMPUTE_APPS="gpu_uuid,pid,process_name"
+NVIDIA_SMI_QUERY_COMPUTE_APPS="gpu_uuid,pid,process_name,used_memory"
+NVIDIA_SMI_QUERY_ACCOUNTED_APPS="pid,time,gpu_util,mem_util,max_memory_usage"
 PID_INDEX=3
 COMMAND_INDEX=4
+USED_MEMORY_INDEX=5
 CONTAINER_ID_INDEX=3
 CONTAINER_ID_DIGITS=12
 
+nvidia-smi --query-accounted-apps=${NVIDIA_SMI_QUERY_ACCOUNTED_APPS} --format=csv,noheader | tr -s ", " "\t" | sort >/run/tmp_smi
+
 join -a 1 \
-    <(nvidia-smi --query-gpu=${NVIDIA_SMI_QUERY_GPU} --format=csv,noheader |tr -s ", " "\t") \
-    <(nvidia-smi --query-compute-apps=${NVIDIA_SMI_QUERY_COMPUTE_APPS} --format=csv,noheader |tr -s ", " "\t") | \
-    tr -s ' ' '\t' | \
-while read line
-do
-    pid=$(echo ${line} | tr -d "\n" |awk -v "pid=${PID_INDEX}" '{print $(pid)}')
+    <(nvidia-smi --query-gpu=${NVIDIA_SMI_QUERY_GPU} --format=csv,noheader | tr -s ", " "\t") \
+    <(nvidia-smi --query-compute-apps=${NVIDIA_SMI_QUERY_COMPUTE_APPS} --format=csv,noheader | tr -s ", " "\t") |
+    tr -s ' ' '\t' |
+    while read line; do
+        pid=$(echo ${line} | tr -d "\n" | awk -v "pid=${PID_INDEX}" '{print $(pid)}')
 
-    process=$(ps -o "user,%mem,%cpu,command" -p $pid 2>/dev/null |grep -vE "^USER")
-    if [ $? != 0 ]; then
-        continue
-    fi
+        process=$(ps -o "user,%mem,%cpu,command" -p $pid 2>/dev/null | grep -vE "^USER")
+        if [ $? != 0 ]; then
+            continue
+        fi
 
-    # ps results to TSV
-    process=$(echo ${process} |awk -v OFS='\t' -v "command=${COMMAND_INDEX}" '{for(i=1;i<(command);i++){printf "%s\t", $i}; for(i=4;i<NF;i++){printf "%s ", $i} print $NF}')
+        accounted=$(cat /run/tmp_smi | grep -e "^${pid}" | head -1)
+        # ps results to TSV
+        process=$(echo ${process} | awk -v OFS='\t' -v "command=${COMMAND_INDEX}" '{for(i=1;i<(command);i++){printf "%s\t", $i};end=6;if(NF<7){end=NF+1}; for(i=4;i<end ;i++){printf "%s ", $i}}')
 
-    containerid=$(head -n 1 /proc/$pid/cgroup | cut -d'/' -f ${CONTAINER_ID_INDEX} | cut -c 1-${CONTAINER_ID_DIGITS})
-    dcprocess=$(docker ps | grep $containerid | awk -v 'OFS=\t' '{print $2,$NF}')
-    echo -e "${line}\t${process}\t${dcprocess}"
-done
+        containerid=$(head -n 1 /proc/$pid/cgroup | cut -d'/' -f ${CONTAINER_ID_INDEX} | cut -d- -f 2 | cut -c 1-${CONTAINER_ID_DIGITS})
+        dcprocess="BMS\tBMS"
+        if [[ "$containerid" ]]; then
+            dcprocess=$(docker ps | grep $containerid | awk -v 'OFS=\t' '{print $2,$NF}')
+        fi
+        echo -e "${line}\t${process}\t${dcprocess}\t${accounted}"
+    done

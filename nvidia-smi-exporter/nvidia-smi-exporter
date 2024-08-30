@@ -13,10 +13,16 @@ eval set -- "${options}"
 
 while true; do
     case "$1" in
-        -h) exit 1;;
-        -o) OUTPUT_FILE=$2; shift 2;;
-        -d) COLLECT_INTERVAL_SEC=$2; shift 2;;
-        *)  break;;
+    -h) exit 1 ;;
+    -o)
+        OUTPUT_FILE=$2
+        shift 2
+        ;;
+    -d)
+        COLLECT_INTERVAL_SEC=$2
+        shift 2
+        ;;
+    *) break ;;
     esac
 done
 
@@ -31,36 +37,83 @@ trap 'echo "Caught signal, terminating..."' HUP INT QUIT PIPE TERM
 
 echo "Collecting metrics at ${OUTPUT_FILE} every ${COLLECT_INTERVAL_SEC}s..."
 
-while true
-do
+while true; do
     # Clear
-    echo "" > ${BUFFER_FILE}
+    echo "" >${BUFFER_FILE}
 
     # Convert to prometheus format and write buffer
-    nvidia-smi-ps | \
-    awk -v "out=${BUFFER_FILE}" -v "ngpus=$(nvidia-smi -L | wc -l)" '
-    BEGIN { FS="\t" }
+    nvidia-smi-ps |
+        awk -v "out=${BUFFER_FILE}" -v "ngpus=$(nvidia-smi -L | wc -l)" '
+    BEGIN { 
+        FS="\t"
+        count=0
+    }
     {
         # Labels
         i = 1
-        uuid = $(i++)
-        gpu = $(i++)
-        pid = $(i++)
-        process_name = $(i++)
-        user = $(i++)
-        mem = $(i++)
-        cpu = $(i++)
-        command = $(i++)
-        image_name = $(i++)
-        container_name = $(i++)
+        uuid[count] = $(i++)
+        gpu[count] = $(i++)
+        pid[count] = $(i++)
+        process_name[count] = $(i++)
+        gpu_mem_used [count]= $(i++)
+        i++
+        user[count] = $(i++)
+        mem[count] = $(i++)
+        cpu[count] = $(i++)
+        command[count] = $(i++)
+        image_name[count] = $(i++)
+        container_name[count] = $(i++)
+        i++
+        run_time[count]=$(i++)
+        i++
+        gpu_util[count]=$(i++)
+        i++
+        gmem_util[count]=$(i++)
+        i++
+        max_memory_usage[count]=$(i++)
+        count++
+    }
+    END {
+        # Output        
+        printf "# HELP nvidia_smi_process Process Info\n" > out
+        printf "# TYPE nvidia_smi_process gauge\n" > out
 
-        # Output
-        name = "process"
-        if (gpu == 0) {
-            printf "# HELP nvidia_smi_%s Process Info\n", name > out
-            printf "# TYPE nvidia_smi_%s gauge\n", name > out
-        }
-        printf "nvidia_smi_%s{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\",mem=\"%s\",cpu=\"%s\", image_name=\"%s\", container_name=\"%s\"} 1\n", name, gpu, uuid, pid, process_name, command, user, mem, cpu, image_name, container_name > out
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_process{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} 1\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i] > out
+
+        printf "# HELP nvidia_smi_cpu Process Info\n" > out
+        printf "# TYPE nvidia_smi_cpu gauge\n" > out
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_cpu{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], cpu[i] > out
+
+        printf "# HELP nvidia_smi_mem Process Info\n" > out
+        printf "# TYPE nvidia_smi_mem gauge\n" > out
+        
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_mem{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], mem[i] > out
+
+        printf "# HELP nvidia_smi_run_time Process Info\n" > out
+        printf "# TYPE nvidia_smi_run_time gauge\n" > out
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_run_time{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], run_time[i] > out
+
+        printf "# HELP nvidia_smi_gmem_used Process Info\n" > out
+        printf "# TYPE nvidia_smi_gmem_used gauge\n" > out
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_gmem_used{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], gpu_mem_used[i] > out
+
+        printf "# HELP nvidia_smi_gpu_util Process Info\n" > out
+        printf "# TYPE nvidia_smi_gpu_util gauge\n"     > out 
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_gpu_util{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], gpu_util[i] > out
+
+        printf "# HELP nvidia_smi_gmem_util Process Info\n" > out
+        printf "# TYPE nvidia_smi_gmem_util gauge\n" > out
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_gmem_util{gpu=\"%s\",uuid=\"%s\",pid=\"%s\",process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], gmem_util[i] > out
+
+        printf "# HELP nvidia_smi_max_memory_usage Process Info\n" > out
+        printf "# TYPE nvidia_smi_max_memory_usage gauge\n" > out
+
+        for  ( i = 0; i < count; i++ ) printf "nvidia_smi_max_memory_usage{gpu=\"%s\",uuid=\"%s\",pid=\"%s\", process_name=\"%s\",command=\"%s\",user=\"%s\", image_name=\"%s\", container_name=\"%s\"} %s\n",  gpu[i], uuid[i], pid[i], process_name[i], command[i], user[i], image_name[i], container_name[i], max_memory_usage[i] > out
     }'
 
     # Write
